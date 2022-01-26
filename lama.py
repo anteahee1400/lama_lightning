@@ -110,12 +110,12 @@ def predict(indir, outdir, img_suffix='.png', gpu_id='0'):
         device = torch.device('cuda')
     else:
         device = torch.device('cpu')
-    train_config_path = "/home/ubuntu/yha/lama_lightning/lama/big-lama/config.yaml"
+    train_config_path = "/home/ubuntu/yha/lama_lightning/big-lama/config.yaml"
     with open(train_config_path, "r") as f:
         train_config = OmegaConf.create(yaml.safe_load(f))
     model = load_checkpoint(
         train_config,
-        "/home/ubuntu/yha/lama_lightning/lama/big-lama/models/best.ckpt",
+        "/home/ubuntu/yha/lama_lightning/big-lama/models/best.ckpt",
         map_location="cpu",
     )
     model.eval()
@@ -151,6 +151,59 @@ def predict(indir, outdir, img_suffix='.png', gpu_id='0'):
         cur_res = np.clip(cur_res * 255, 0, 255).astype("uint8")
         cur_res = cv2.cvtColor(cur_res, cv2.COLOR_RGB2BGR)
         cv2.imwrite(cur_out_fname, cur_res)
+        
+        
+def batch_predict(indir, outdir, img_suffix='.png', gpu_id='0'):
+    import yaml
+    from omegaconf import OmegaConf
+    import time
+    if gpu_id != 'cpu':
+        torch.cuda.set_device(int(gpu_id))
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    train_config_path = "/home/ubuntu/yha/lama_lightning/big-lama/config.yaml"
+    with open(train_config_path, "r") as f:
+        train_config = OmegaConf.create(yaml.safe_load(f))
+    model = load_checkpoint(
+        train_config,
+        "/home/ubuntu/yha/lama_lightning/big-lama/models/best.ckpt",
+        map_location="cpu",
+    )
+    model.eval()
+    model.to(device)
+
+    if not indir.endswith("/"):
+        indir += "/"
+
+    dataset = make_default_val_dataset(
+        indir, img_suffix=img_suffix, pad_out_to_modulo=8
+    )
+    with torch.no_grad():
+        mask_fname = dataset.mask_filenames[0]
+        cur_out_fname = os.path.join(
+            outdir, os.path.splitext(mask_fname[len(indir) :])[0] + ".png"
+        )
+        os.makedirs(os.path.dirname(cur_out_fname), exist_ok=True)
+        batch = move_to_device(default_collate([dataset[0]]), device)
+        batch["mask"] = (batch["mask"] > 0) * 1
+        
+        start = time.time()
+        batch = model(batch)
+        end = time.time() - start
+        print(end)
+        cur_res = (
+            batch['inpainted'][0]
+            .permute(1, 2, 0)
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+        cur_res = np.clip(cur_res * 255, 0, 255).astype("uint8")
+        cur_res = cv2.cvtColor(cur_res, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(cur_out_fname, cur_res)
+        
 
 if __name__ == "__main__":
     import argparse
